@@ -1,0 +1,132 @@
+version: '2.3'
+
+networks:
+  messages-network:
+    driver: bridge
+
+services:
+    rabbitmq:
+        image: rabbitmq:3-management
+        container_name: rabbitmq
+        environment:
+            - RABBITMQ_DEFAULT_USER=user
+            - RABBITMQ_DEFAULT_PASS=password
+        ports:
+            - "5672:5672"
+            - "15672:15672"
+        networks:
+            - messages-network
+
+    producer:
+        build: ./producer
+        container_name: producer
+        entrypoint: /var/www/entrypoint.sh
+        volumes:
+            - ./producer:/var/www
+        networks:
+            - messages-network
+        depends_on:
+            mysql-producer:
+                  condition: service_healthy
+
+    mysql-producer:
+        image: mysql:5.7
+        command: --innodb-use-native-aio=0
+        container_name: mysql-producer
+        restart: always
+        tty: true
+        ports:
+            - "3307:3306"
+        volumes:
+            - ./mysql-producer/dbdata:/var/lib/mysql
+        environment:
+            - MYSQL_DATABASE=producer
+            - MYSQL_ROOT_PASSWORD=root
+            - MYSQL_USER=root
+        networks:
+            - messages-network
+        healthcheck:
+            test: ["CMD-SHELL", 'mysql -uroot --database=producer --password=root --execute="SELECT count(table_name) > 0 FROM information_schema.tables;" --skip-column-names -B']
+            interval: 10s
+            timeout: 10s
+            retries: 4
+
+    nginx-producer:
+        build: ./nginx-producer
+        container_name: nginx-producer
+        restart: always
+        tty: true
+        ports:
+            - "8001:80"
+        volumes:
+            - ./producer:/var/www
+        networks:
+            - messages-network
+        depends_on:
+            - producer
+
+    consumer:
+        build: ./consumer
+        container_name: consumer
+        entrypoint: /var/www/entrypoint.sh
+        volumes:
+            - ./consumer:/var/www
+        networks:
+            - messages-network
+        depends_on:
+            mysql-consumer:
+                  condition: service_healthy
+
+    mysql-consumer:
+        image: mysql:5.7
+        command: --innodb-use-native-aio=0
+        container_name: mysql-consumer
+        restart: always
+        tty: true
+        ports:
+            - "3308:3306"
+        volumes:
+            - ./mysql-consumer/dbdata:/var/lib/mysql
+        environment:
+            - MYSQL_DATABASE=consumer
+            - MYSQL_ROOT_PASSWORD=root
+            - MYSQL_USER=root
+        networks:
+            - messages-network
+        healthcheck:
+            test: ["CMD-SHELL", 'mysql -uroot --database=consumer --password=root --execute="SELECT count(table_name) > 0 FROM information_schema.tables;" --skip-column-names -B']
+            interval: 10s
+            timeout: 10s
+            retries: 4
+
+    phpmyadmin-consumer:
+        image: phpmyadmin/phpmyadmin:latest
+        container_name: phpmyadmin-consumer
+        restart: always
+        tty: true
+        ports:
+            - "9002:80"
+        links:
+            - mysql-consumer
+        environment:
+            - PMA_HOST=mysql-consumer
+            - MYSQL_USER=root
+            - MYSQL_ROOT_PASSWORD=root
+        networks:
+            - messages-network
+        depends_on:
+            - mysql-consumer
+
+    nginx-consumer:
+        build: ./nginx-consumer
+        container_name: nginx-consumer
+        restart: always
+        tty: true
+        ports:
+            - "8002:80"
+        volumes:
+            - ./consumer:/var/www
+        networks:
+            - messages-network
+        depends_on:
+            - consumer
